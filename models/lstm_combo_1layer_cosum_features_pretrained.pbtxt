@@ -1,23 +1,24 @@
-name: "lstm_combo"
-checkpoint_dir: "/ais/gobi3/u/emansim/unsupervised_videos/models"
+name: "lstm_combo_1layer_cosum_features"
+checkpoint_dir: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/cosum_features"
 print_after: 100
 display_after: 0
 validate_after: 500
-save_after: 500
-max_iters: 10000000
+save_after: 2000
+max_iters: 100000
 dec_seq_length: 10
 future_seq_length: 10
 dec_conditional: true
 future_conditional: true
-binary_data: true
+binary_data: false
+has_self_expressive_layer: true
 lstm {
   name: "lstm_1_enc"
   num_hid: 2048
   has_input: true
-  input_dims: 4096
+  input_dims: 512
   w_dense {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_enc:w_dense"
     scale: 0.01
     epsilon: 0.0001
@@ -29,7 +30,7 @@ lstm {
   }
   w_diag {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_enc:w_diag"
     scale: 0.1
     epsilon: 0.0001
@@ -41,7 +42,7 @@ lstm {
   }
   b {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_enc:b"
     scale: 0.0
     epsilon: 0.0001
@@ -52,7 +53,7 @@ lstm {
   }
   w_input {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_enc:w_input"
     scale: 0.01
     epsilon: 0.0001
@@ -73,7 +74,7 @@ lstm_dec {
   input_dims: 4096
   w_dense {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_dec:w_dense"
     scale: 0.01
     epsilon: 0.0001
@@ -85,7 +86,7 @@ lstm_dec {
   }
   w_diag {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_dec:w_diag"
     scale: 0.1
     epsilon: 0.0001
@@ -97,7 +98,7 @@ lstm_dec {
   }
   b {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_dec:b"
     scale: 0.0
     epsilon: 0.0001
@@ -108,7 +109,7 @@ lstm_dec {
   }
    w_input {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_dec:w_input"
     scale: 0.01
     epsilon: 0.0001
@@ -121,7 +122,7 @@ lstm_dec {
 
   w_output {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_dec:w_output"
     scale: 0.01
     epsilon: 0.0001
@@ -133,7 +134,7 @@ lstm_dec {
   }
   b_output {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_dec:b_output"
     scale: 0.0
     epsilon: 0.0001
@@ -153,7 +154,7 @@ lstm_future {
   output_dims: 4096
   w_dense {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_fut:w_dense"
     scale: 0.01
     epsilon: 0.0001
@@ -165,7 +166,7 @@ lstm_future {
   }
   w_diag {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_fut:w_diag"
     scale: 0.1
     epsilon: 0.0001
@@ -177,7 +178,7 @@ lstm_future {
   }
   b {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_fut:b"
     scale: 0.0
     epsilon: 0.0001
@@ -188,7 +189,7 @@ lstm_future {
   }
   w_input {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_fut:w_input"
     scale: 0.01
     epsilon: 0.0001
@@ -200,7 +201,7 @@ lstm_future {
   }
   w_output {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_fut:w_output"
     scale: 0.01
     epsilon: 0.0001
@@ -212,7 +213,7 @@ lstm_future {
   }
   b_output {
     init_type: PRETRAINED
-    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/lstm_combo_20181211023358.h5"
+    file_name: "/home/zwe/unsupervised_videos/models/checkpoints/cosum_features/lstm_combo_20181211023358.h5"
     dataset_name: "lstm_1_fut:b_output"
     scale: 0.0
     epsilon: 0.0001

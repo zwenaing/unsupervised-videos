@@ -1,5 +1,5 @@
 name: "lstm_combo"
-checkpoint_dir: "/ais/gobi3/u/emansim/unsupervised-videos/models"
+checkpoint_dir: "/home/zwe/unsupervised_videos/models/checkpoints"
 print_after: 100
 display_after: 0
 validate_after: 500

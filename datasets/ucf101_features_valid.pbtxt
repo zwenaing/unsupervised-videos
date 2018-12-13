@@ -1,7 +1,7 @@
-data_file: "/ais/gobi3/u/emansim/unsupervised-videos/ucf101_sample_valid_features.h5"
+data_file: "/home/zwe/unsupervised_videos/datasets/ucf101_sample_valid_features.h5"
 dataset_name: "hidden6"
-labels_file: "/ais/gobi3/u/emansim/unsupervised-videos/ucf101_sample_valid_labels.txt"
-num_frames_file : "/ais/gobi3/u/emansim/unsupervised-videos/ucf101_sample_valid_num_frames.txt"
+labels_file: "/home/zwe/unsupervised_videos/datasets/ucf101_sample_valid_labels.txt"
+num_frames_file : "/home/zwe/unsupervised_videos/datasets/ucf101_sample_valid_num_frames.txt"
 num_frames: 16
 stride: 1
 randomize: false

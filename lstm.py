@@ -16,7 +16,7 @@ class LSTM(object):
     self.output_dropprob_ = lstm_config.output_dropprob
     self.t_ = 0
 
-    print num_lstms
+    # print num_lstms
     # diag are peephole connections from cell state to diffent gates
     self.w_dense_  = Param((4 * num_lstms, num_lstms), lstm_config.w_dense)
     self.w_diag_   = Param((1, 3 * num_lstms), lstm_config.w_diag)

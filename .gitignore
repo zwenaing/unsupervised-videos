@@ -5,3 +5,6 @@ cudamat/*.pyc
 playground.py
 *.pdf
 outputs/*
+.idea/*
+datasets/*
+models/checkpoints/*

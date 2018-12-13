@@ -17,6 +17,7 @@ message Data {
     BOUNCING_MNIST = 2;
     BOUNCING_MNIST_FIXED = 3;
     VIDEO_PATCH = 4;
+    COSUM = 5;
   }
   optional DatasetType dataset_type = 9 [default=LABELLED];
 
@@ -37,6 +38,8 @@ message Data {
   optional int32 num_colors   = 18 [default=0];
   optional string mean_file = 19;
   optional int32 sample_times = 20 [default=1];
+
+  optional int32 num_aggregated_frames = 21 [default=1];
 }
 
 message Param {
@@ -119,4 +122,8 @@ message Model {
   optional bool future_copy_init_state = 21 [default=false];
   
   optional bool relu_data = 22 [default=false];
+
+  // Determine whether the model has self expressiveness layer between
+  // encoder and decoder
+  optional bool has_self_expressive_layer = 23 [default=false];
 }

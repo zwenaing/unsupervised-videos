@@ -1,11 +1,13 @@
 from data_handler import *
 import lstm
+import pickle
 
 
 class LSTMCombo(object):
   def __init__(self, model):
-    self.model_ = model
-    
+    self.model_ = model   # keeps the model configurations alongside global configurations
+
+    # stacks of encoder, decoder and future predictions
     self.lstm_stack_enc_ = lstm.LSTMStack()
     self.lstm_stack_dec_ = lstm.LSTMStack()
     self.lstm_stack_fut_ = lstm.LSTMStack()
@@ -15,16 +17,20 @@ class LSTMCombo(object):
     
     # add LSTM blocks for encoder, decoder and future predictor
     for l in model.lstm:
+      # get LSTM encoder model according to specifications
       self.lstm_stack_enc_.Add(lstm.LSTM(l))
     if model.dec_seq_length > 0:
       for l in model.lstm_dec:
+        # get LSTM decoder model according to specifications
         self.lstm_stack_dec_.Add(lstm.LSTM(l))
     if model.future_seq_length > 0:
       for l in model.lstm_future:
+        # get LSTM future predictor model according to specifications
         self.lstm_stack_fut_.Add(lstm.LSTM(l))
     
     # do other initialization stuff
     assert model.dec_seq_length > 0 or model.future_seq_length > 0
+    # get specification of whether decoder and future predictors are conditional on inputs
     self.is_conditional_dec_ = model.dec_conditional
     self.is_conditional_fut_ = model.future_conditional
    
@@ -170,18 +176,28 @@ class LSTMCombo(object):
       f.subtract(v, target=deriv)
 
   def GetLoss(self):
+    #TODO: modify this loss to contain the row sparsity and self expressiveness loss
     for t in xrange(self.dec_seq_length_):
+      # compute the decoding loss in reverse order
+      # this code selects the right interval of output and ground truth
+      # e.g., first image in input must be compared with the last of reconstructed output
       t2 = self.enc_seq_length_ - t - 1
       dec = self.v_dec_.col_slice(t * self.num_dims_, (t+1) * self.num_dims_)
       v = self.v_.col_slice(t2 * self.num_dims_, (t2+1) * self.num_dims_)
       deriv = self.v_dec_deriv_.col_slice(t * self.num_dims_, (t+1) * self.num_dims_)
-      
+
+      # MNIST is binary, only contains two digits
+      # UFC101 is not binary
       if self.binary_data_:
+        #TODO: this is surprising, why use cross entropy for decoding loss
         cm.cross_entropy_bernoulli(v, dec, target=deriv)
       else:
         dec.subtract(v, target=deriv)
 
     for t in xrange(self.future_seq_length_):
+      # compute the prediction loss in same order
+      # this code selects the right interval of output and ground truth
+      # e.g., the first algorithm predicted output must be compared with first image of ground truth
       t2 = t + self.enc_seq_length_
       f = self.v_fut_.col_slice(t * self.num_dims_, (t+1) * self.num_dims_)
       v = self.v_.col_slice(t2 * self.num_dims_, (t2+1) * self.num_dims_)
@@ -201,6 +217,7 @@ class LSTMCombo(object):
       if self.future_seq_length_ > 0:
         loss_fut = self.v_fut_deriv_.sum()
     else:
+      # we already have subtracted value, now compute the norm
       if self.dec_seq_length_ > 0:
         loss_dec = 0.5 * (self.v_dec_deriv_.euclid_norm()**2)
       if self.future_seq_length_ > 0:
@@ -233,24 +250,32 @@ class LSTMCombo(object):
     self.num_dims_ = train_data.GetDims()
     batch_size = train_data.GetBatchSize()
     seq_length = train_data.GetSeqLength()
+    # these are specified in model specifications
     dec_seq_length    = self.model_.dec_seq_length
     future_seq_length = self.model_.future_seq_length
     assert seq_length == dec_seq_length + future_seq_length
 
     self.batch_size_ = batch_size
+    # this is correct. If we train 10 images for encoding and 10 images for future predictions,
+    # we need to input 20 images to compute loss
     self.enc_seq_length_    = seq_length - future_seq_length
     self.dec_seq_length_    = dec_seq_length
     self.future_seq_length_ = future_seq_length
     self.lstm_stack_enc_.SetBatchSize(batch_size, self.enc_seq_length_)
+    # this variable keeps the input data
     self.v_ = cm.empty((batch_size, seq_length * self.num_dims_))
     if dec_seq_length > 0:
       self.lstm_stack_dec_.SetBatchSize(batch_size, dec_seq_length)
+      # keep the decoding output
       self.v_dec_ = cm.empty((batch_size, dec_seq_length * self.num_dims_))
+      # keep the decoding ouput and encoding input difference
       self.v_dec_deriv_ = cm.empty((batch_size, dec_seq_length * self.num_dims_))
 
     if future_seq_length > 0:
       self.lstm_stack_fut_.SetBatchSize(batch_size, future_seq_length)
+      # keep the furture predictions output
       self.v_fut_ = cm.empty((batch_size, future_seq_length * self.num_dims_))
+      # keep the decoding ouput and encoding input difference
       self.v_fut_deriv_ = cm.empty((batch_size, future_seq_length * self.num_dims_))
 
   def Save(self, model_file):
@@ -340,7 +365,8 @@ class LSTMCombo(object):
     save = save_after > 0
     display_after = self.model_.display_after
     display = display_after > 0
-
+    loss_dec_history = []
+    loss_fut_history = []
     for ii in xrange(1, self.model_.max_iters + 1):
       newline = False
       sys.stdout.write('\rStep %d' % ii)
@@ -350,6 +376,8 @@ class LSTMCombo(object):
       self.Fprop(train=True)
 
       # Compute Performance.
+
+      # get the decoding loss and future predictions loss
       this_loss_dec, this_loss_fut = self.GetLoss()
       if self.dec_seq_length_ > 0:
         loss_dec += this_loss_dec / (self.dec_seq_length_ * self.batch_size_)
@@ -362,7 +390,9 @@ class LSTMCombo(object):
       if ii % print_after == 0:
         loss_dec /= print_after
         loss_fut /= print_after
-        sys.stdout.write(' Dec %.5f Fut %.5f' % (loss_dec, loss_fut))
+        loss_dec_history.append(loss_dec)
+        loss_fut_history.append(loss_fut)
+        sys.stdout.write(' Decoding Loss %.5f Future Prediction %.5f' % (loss_dec, loss_fut))
         loss_dec = 0
         loss_fut = 0
         newline = True
@@ -384,7 +414,16 @@ class LSTMCombo(object):
         newline = True
 
       if save and ii % save_after == 0:
+        sys.stdout.write("\nSave model parameters: \n")
         self.Save('%s.h5' % model_file)
+        sys.stdout.write("\nSave decoding and future prediction loss:")
+        loss = {
+          'future_loss': loss_fut_history,
+          'decoding_loss': loss_dec_history
+        }
+        with open("%s_loss.pkl" % model_file, 'wb') as f:
+          pickle.dump(loss, f)
+
       if newline:
         sys.stdout.write('\n')
 
@@ -394,14 +433,15 @@ def main():
   model = ReadModelProto(sys.argv[1])
   lstm_autoencoder = LSTMCombo(model)
   train_data = ChooseDataHandler(ReadDataProto(sys.argv[2]))
-  valid_data = ChooseDataHandler(ReadDataProto(sys.argv[3]))
-  lstm_autoencoder.Train(train_data, valid_data)
+  # valid_data = ChooseDataHandler(ReadDataProto(sys.argv[3]))
+  # lstm_autoencoder.Train(train_data, valid_data)
+  lstm_autoencoder.Train(train_data)
 
 if __name__ == '__main__':
   # Set the board
   board_id = int(sys.argv[4])
   board = LockGPU(board=board_id)
-  print 'Using board', board
+  print 'Using GPU Number', board
 
   cm.CUDAMatrix.init_random(42)
   np.random.seed(42)

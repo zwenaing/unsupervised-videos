@@ -3,6 +3,7 @@
 from util import *
 import sys
 
+
 def ChooseDataHandler(data_pb):
   if data_pb.dataset_type == config_pb2.Data.LABELLED:
     return DataHandler(data_pb)
@@ -12,13 +13,206 @@ def ChooseDataHandler(data_pb):
     return BouncingMNISTDataHandler(data_pb)
   elif data_pb.dataset_type == config_pb2.Data.VIDEO_PATCH:
     return VideoPatchDataHandler(data_pb)
+  elif data_pb.dataset_type == config_pb2.Data.COSUM:
+    return CosumDataHandler(data_pb)
   else:
     raise Exception('Unknown DatasetType.')
 
+
+# TODO: Add DataHandler for CoSum dataset
+
+class CosumDataHandler(object):
+  """
+  Handle the cosum dataset input. Set the required parameters appropriately.
+  """
+  def __init__(self, data_pb):
+    self.data_, video_boundaries, num_frames = self.ConcatenateVideoVGG(data_pb)
+    self.seq_length_ = data_pb.num_frames  # set to 20
+    self.seq_stride_ = data_pb.stride  # set to 1
+    self.randomize_ = data_pb.randomize  # set to false
+    self.batch_size_ = data_pb.batch_size  # set to 100
+    self.image_size_x_ = data_pb.image_size_x  # set to 0
+    self.image_size_y_ = data_pb.image_size_y  # set to 0
+    self.patch_size_x_ = data_pb.patch_size_x  # set to 0
+    self.patch_size_y_ = data_pb.patch_size_y  # set to 0
+    self.sample_times_ = data_pb.sample_times  # set to 1
+    self.num_colors_ = data_pb.num_colors  # set to 0
+    self.num_aggregated_frames_ = data_pb.num_aggregated_frames   # set to 1
+
+    if self.image_size_x_ == 0:
+      self.image_size_x_ = 1  # changed to 1
+    if self.image_size_y_ == 0:
+      self.image_size_y_ = 1  # changed to 1
+    if self.patch_size_x_ == 0:
+      self.patch_size_x_ = self.image_size_x_
+    if self.patch_size_y_ == 0:
+      self.patch_size_y_ = self.image_size_y_
+    if self.num_colors_ == 0:
+      self.num_colors_ = self.data_.shape[1]  # set to size of VGG
+
+    # mean file is not given for this dataset
+    if data_pb.mean_file != "":
+      f = h5py.File(data_pb.mean_file)
+      self.mean_ = f['pixel_mean'].value
+      self.std_ = f['pixel_std'].value
+      assert self.mean_.shape[0] == self.num_colors_
+      f.close()
+    else:
+      self.mean_ = None
+      self.std_ = None
+
+    self.frame_size_ = self.num_colors_ * self.patch_size_y_ * self.patch_size_x_  # ressult is size of VGG, 512
+    assert self.num_colors_ * self.image_size_y_ * self.image_size_x_ == self.data_.shape[1]
+
+    self.x_slack_ = self.image_size_x_ - self.patch_size_x_  # no slack, 0
+    self.y_slack_ = self.image_size_y_ - self.patch_size_y_  # no slack, 0
+
+    # video_boundaries, num_frames = self.GetBoundaries(data_pb.num_frames_file)
+    # labels = self.GetLabels(data_pb.labels_file)
+    # assert len(labels) == len(video_boundaries)
+
+    # select a subset of videos if specified, otherwise pick all videos
+    video_ids = self.GetVideoIds(data_pb.video_ids_file)
+    if len(video_ids) == 0:
+      video_ids = range(len(num_frames))
+
+    self.num_frames_ = []
+    self.video_ind_ = {}
+    frame_indices = []
+    # this_labels = []
+    for v, video_id in enumerate(video_ids):
+      # this_labels.append(labels[video_id])
+
+      # boundary of each video in concatenated VGG features
+      start, end = video_boundaries[video_id]
+      self.num_frames_.append(num_frames[video_id])
+      end = end - (self.seq_length_ * self.num_aggregated_frames_) + 1
+      frame_indices.extend(range(start, end, self.seq_stride_ * self.num_aggregated_frames_))
+      for i in xrange(start, end, self.seq_stride_ * self.num_aggregated_frames_):
+        self.video_ind_[i] = v
+
+    self.num_videos_ = len(video_ids)
+    self.dataset_size_ = len(frame_indices)
+    print 'Dataset size', self.dataset_size_
+    self.frame_indices_ = np.array(frame_indices)
+    # self.labels_ = np.array(this_labels).reshape(-1, 1)
+
+    self.Reset()
+    self.batch_data_ = np.zeros((self.batch_size_, self.seq_length_ * self.frame_size_), dtype=np.float32)
+    self.batch_label_ = np.zeros((self.batch_size_, 1), dtype=np.float32)
+
+  def ConcatenateVideoVGG(self, data_pb):
+    """
+    The VGG representations of Cosum dataset have separate entry for
+    :param data_pb:
+    :return:
+    """
+    topic_file_names = sorted(os.listdir(data_pb.data_file))
+    concat_data = None
+    boundaries = []   # keep the boundaries of each video in concatenated data matrix
+    num_frames = []   # the number of frames in each video
+    start = 0
+    # loop over all topics in Cosum dataset
+    for topic_file_name in topic_file_names:
+      data = h5py.File(os.path.join(data_pb.data_file, topic_file_name))[data_pb.dataset_name]
+      video_names = sorted(data.keys())
+      for video_name in video_names:
+        video_data = data[video_name]
+        n_frames, _ = video_data.shape
+        num_frames.append(n_frames)
+        end = start + n_frames
+        boundaries.append((start, end))
+        start = end
+        if concat_data is None:
+          concat_data = video_data
+        else:
+          concat_data = np.vstack([concat_data, video_data])
+
+    assert concat_data.shape[0] == sum(num_frames), "The total number of concated frames do not match"
+
+    return concat_data, boundaries, num_frames
+
+  def Reset(self):
+    self.frame_row_ = 0
+    if self.randomize_:
+      np.random.shuffle(self.frame_indices_)
+
+  def GetVideoIds(self, filename):
+    video_ids = []
+    if filename != '':
+      for line in open(filename):
+        video_ids.append(int(line.strip()))
+    return video_ids
+
+  def GetBatchSize(self):
+    return self.batch_size_
+
+  def GetDims(self):
+    return self.frame_size_
+
+  def GetDatasetSize(self):
+    return self.dataset_size_
+
+  def GetSeqLength(self):
+    return self.seq_length_
+
+    # Crop the patch from image frame
+  def Crop(self, data, num_crops=1):
+    d = data.reshape((data.shape[0], self.num_colors_, self.image_size_y_, self.image_size_x_))
+    if self.x_slack_ > 0:
+      x_offset = np.random.choice(self.x_slack_, size=num_crops)
+    else:
+      x_offset = np.zeros(num_crops, dtype=np.int32)
+    if self.y_slack_ > 0:
+      y_offset = np.random.choice(self.y_slack_, size=num_crops)
+    else:
+      y_offset = np.zeros(num_crops, dtype=np.int32)
+
+    crops = np.zeros((num_crops, data.shape[0], self.num_colors_, self.patch_size_y_, self.patch_size_x_))
+    seq_length = data.shape[0]
+    for i in xrange(num_crops):
+      crops[i, :, :, :, :] = d[:, :,
+                             y_offset[i]: y_offset[i] + self.patch_size_y_,
+                             x_offset[i]: x_offset[i] + self.patch_size_x_]
+    if self.mean_ is not None:
+      for i in xrange(self.num_colors_):
+        crops[:, :, i, :, :] -= self.mean_[i]
+        crops[:, :, i, :, :] /= self.std_[i]
+    return crops.reshape((num_crops, -1))
+
+  def GetBatch(self, verbose=False):
+    batch_size = self.batch_size_
+    for j in xrange(batch_size):
+      if verbose:
+        sys.stdout.write('\r%d of %d' % (j + 1, batch_size))
+        sys.stdout.flush()
+      ind = j % self.sample_times_
+      if ind == 0:
+        start = self.frame_indices_[self.frame_row_]
+        self.frame_row_ += 1
+        if self.frame_row_ == self.dataset_size_:
+          self.Reset()
+        end = start + (self.seq_length_ * self.num_aggregated_frames_)
+        aggregated_data = np.ndarray([0, 512])
+        k = start
+        while k < end:
+          aggregated_frame = np.mean(self.data_[k : k + self.num_aggregated_frames_, :], axis=0)
+          aggregated_data = np.vstack([aggregated_data, aggregated_frame])
+          k += self.num_aggregated_frames_
+
+        # crops = self.Crop(self.data_[start:end, :], self.sample_times_)
+        crops = self.Crop(aggregated_data, self.sample_times_)
+
+      self.batch_data_[j, :] = crops[ind, :].reshape(-1)
+      # self.batch_label_[j, :] = self.labels_[self.video_ind_[start], :]
+    if verbose:
+      sys.stdout.write('\n')
+    return self.batch_data_, self.batch_label_
+
 class DataHandler(object):
-  """Handling labelled datasets. 
+  """Handling labelled datasets.
     Input could be anything from features of convolutional net to raw pixels."""
-   
+
   def __init__(self, data_pb):
     self.data_ = h5py.File(data_pb.data_file)[data_pb.dataset_name]
     self.seq_length_ = data_pb.num_frames
@@ -30,8 +224,8 @@ class DataHandler(object):
     self.patch_size_x_ = data_pb.patch_size_x
     self.patch_size_y_ = data_pb.patch_size_y
     self.sample_times_ = data_pb.sample_times
-    self.num_colors_   = data_pb.num_colors
-    
+    self.num_colors_ = data_pb.num_colors
+
     if self.image_size_x_ == 0:
       self.image_size_x_ = 1
     if self.image_size_y_ == 0:
@@ -52,20 +246,21 @@ class DataHandler(object):
     else:
       self.mean_ = None
       self.std_ = None
-    
+
     self.frame_size_ = self.num_colors_ * self.patch_size_y_ * self.patch_size_x_
+    print(self.frame_size_)
     assert self.num_colors_ * self.image_size_y_ * self.image_size_x_ == self.data_.shape[1]
 
     self.x_slack_ = self.image_size_x_ - self.patch_size_x_
     self.y_slack_ = self.image_size_y_ - self.patch_size_y_
-    
+
     video_boundaries, num_frames = self.GetBoundaries(data_pb.num_frames_file)
     labels = self.GetLabels(data_pb.labels_file)
     assert len(labels) == len(video_boundaries)
     video_ids = self.GetVideoIds(data_pb.video_ids_file)
     if len(video_ids) == 0:
       video_ids = range(len(labels))
-    
+
     self.num_frames_ = []
     self.video_ind_ = {}
     frame_indices = []
@@ -78,15 +273,15 @@ class DataHandler(object):
       frame_indices.extend(range(start, end, self.seq_stride_))
       for i in xrange(start, end, self.seq_stride_):
         self.video_ind_[i] = v
-    
+
     self.num_videos_ = len(video_ids)
     self.dataset_size_ = len(frame_indices)
     print 'Dataset size', self.dataset_size_
-    self.frame_indices_ = np.array(frame_indices) 
+    self.frame_indices_ = np.array(frame_indices)
     self.labels_ = np.array(this_labels).reshape(-1, 1)
 
     self.Reset()
-    self.batch_data_  = np.zeros((self.batch_size_, self.seq_length_ * self.frame_size_), dtype=np.float32)
+    self.batch_data_ = np.zeros((self.batch_size_, self.seq_length_ * self.frame_size_), dtype=np.float32)
     self.batch_label_ = np.zeros((self.batch_size_, 1), dtype=np.float32)
 
   # Get the boundaries (start index and end index) of each video
@@ -149,8 +344,8 @@ class DataHandler(object):
     seq_length = data.shape[0]
     for i in xrange(num_crops):
       crops[i, :, :, :, :] = d[:, :,
-             y_offset[i]: y_offset[i] + self.patch_size_y_,
-             x_offset[i]: x_offset[i] + self.patch_size_x_]
+                             y_offset[i]: y_offset[i] + self.patch_size_y_,
+                             x_offset[i]: x_offset[i] + self.patch_size_x_]
     if self.mean_ is not None:
       for i in xrange(self.num_colors_):
         crops[:, :, i, :, :] -= self.mean_[i]
@@ -161,7 +356,7 @@ class DataHandler(object):
     batch_size = self.batch_size_
     for j in xrange(batch_size):
       if verbose:
-        sys.stdout.write('\r%d of %d' % (j+1, batch_size))
+        sys.stdout.write('\r%d of %d' % (j + 1, batch_size))
         sys.stdout.flush()
       ind = j % self.sample_times_
       if ind == 0:
@@ -186,18 +381,18 @@ class DataHandler(object):
 
     # pooled_pred are averaged results for all selected frames in the video
     for i in xrange(self.num_videos_):
-      end = start + 1 + max(0, (self.num_frames_[i] - self.seq_length_)/self.seq_stride_)
+      end = start + 1 + max(0, (self.num_frames_[i] - self.seq_length_) / self.seq_stride_)
       correct += (predictions[start:end, :].argmax(axis=1) == self.labels_[i]).sum()
       pooled_pred = predictions[start:end, :].mean(axis=0)
       pooled_correct += pooled_pred.argmax() == self.labels_[i]
       start = end
     return correct / float(self.dataset_size_), pooled_correct / float(self.num_videos_)
-  
+
   def DisplayData(self, data, rec=None, fut=None, fig=1, case_id=0, output_file=None):
     name, ext = os.path.splitext(output_file)
     output_file1 = '%s_original%s' % (name, ext)
     output_file2 = '%s_recon%s' % (name, ext)
-    
+
     if self.num_colors_ == 3:
       d = data[0, :].reshape(self.seq_length_, self.num_colors_, self.patch_size_y_, self.patch_size_x_)
       r = rec[0, :].reshape(-1, self.num_colors_, self.patch_size_y_, self.patch_size_x_)
@@ -206,33 +401,33 @@ class DataHandler(object):
       im2 = np.zeros((self.patch_size_y_, self.patch_size_x_, self.num_colors_), dtype=np.uint8)
       rec_length = r.shape[0] if rec is not None else 0
       fut_length = f.shape[0] if fut is not None else 0
-      plt.figure(2*fig, figsize=(self.seq_length_, 1))
+      plt.figure(2 * fig, figsize=(self.seq_length_, 1))
       plt.clf()
       for i in xrange(self.seq_length_):
         for j in xrange(self.num_colors_):
           im1[:, :, j] = ((d[i, j, :, :] * self.std_[j]) + self.mean_[j]).astype(np.uint8)
-        plt.subplot(1, self.seq_length_, i+1)
+        plt.subplot(1, self.seq_length_, i + 1)
         plt.imshow(im1, interpolation="nearest")
         plt.axis('off')
         plt.draw()
 
       print output_file1
       plt.savefig(output_file1, bbox_inches='tight')
-      plt.figure(2*fig+1, figsize=(self.seq_length_, 1))
+      plt.figure(2 * fig + 1, figsize=(self.seq_length_, 1))
       plt.clf()
       for i in xrange(self.seq_length_):
         for j in xrange(self.num_colors_):
           r_i = rec_length - i - 1
           f_i = i - rec_length
-          if r_i >= 0: 
+          if r_i >= 0:
             im = (r[r_i, j, :, :] * self.std_[j]) + self.mean_[j]
             im = np.minimum(255, np.maximum(im, 0))
             im2[:, :, j] = im.astype(np.uint8)
-          if f_i >= 0: 
+          if f_i >= 0:
             im = (f[f_i, j, :, :] * self.std_[j]) + self.mean_[j]
             im = np.minimum(255, np.maximum(im, 0))
             im2[:, :, j] = im.astype(np.uint8)
-        plt.subplot(1, self.seq_length_, i+1)
+        plt.subplot(1, self.seq_length_, i + 1)
         plt.imshow(im2, interpolation="nearest")
         plt.axis('off')
         plt.draw()
@@ -240,7 +435,7 @@ class DataHandler(object):
       plt.savefig(output_file2, bbox_inches='tight')
     else:
       for i in xrange(self.seq_length_):
-        plt.subplot(1, self.seq_length_, i+1)
+        plt.subplot(1, self.seq_length_, i + 1)
         for j in xrange(self.num_colors_):
           im[:, :, j] = d[i, j, :, :].astype(np.uint8)
         plt.imshow(im)
@@ -251,10 +446,11 @@ class DataHandler(object):
         print output_file
         plt.savefig(output_file, bbox_inches='tight')
 
+
 class UnlabelledDataHandler(object):
   """Handling unlabelled datasets.
      Generalizes VideoPatchDataHandler."""
-  
+
   def __init__(self, data_pb):
     self.seq_length_ = data_pb.num_frames
     self.seq_stride_ = data_pb.stride
@@ -270,7 +466,6 @@ class UnlabelledDataHandler(object):
     for line in open(data_pb.num_frames_file):
       num_f.append(int(line.strip()))
     assert len(num_f) == len(fnames)
-
     for i in xrange(len(num_f)):
       if num_f[i] >= self.seq_length_:
         self.num_frames_.append(num_f[i])
@@ -293,10 +488,10 @@ class UnlabelledDataHandler(object):
       start += f
     self.dataset_size_ = len(frame_indices)
     print 'Dataset size', self.dataset_size_
-    self.frame_indices_ = np.array(frame_indices) 
+    self.frame_indices_ = np.array(frame_indices)
     self.vid_boundary_ = np.array(self.num_frames_).cumsum()
     self.Reset()
-    self.batch_data_  = np.zeros((self.batch_size_, self.seq_length_ * self.frame_size_), dtype=np.float32)
+    self.batch_data_ = np.zeros((self.batch_size_, self.seq_length_ * self.frame_size_), dtype=np.float32)
 
   def GetBatchSize(self):
     return self.batch_size_
@@ -331,8 +526,10 @@ class UnlabelledDataHandler(object):
       f.close()
     return self.batch_data_, None
 
+
 class BouncingMNISTDataHandler(object):
   """Data Handler that creates Bouncing MNIST dataset on the fly."""
+
   def __init__(self, data_pb):
     self.seq_length_ = data_pb.num_frames
     self.batch_size_ = data_pb.batch_size
@@ -344,7 +541,7 @@ class BouncingMNISTDataHandler(object):
     self.frame_size_ = self.image_size_ ** 2
 
     try:
-      f = h5py.File('/ais/gobi3/u/nitish/mnist/mnist.h5')
+      f = h5py.File('/home/zwe/unsupervised_videos/datasets/mnist.h5')
     except:
       print 'Please set the correct path to MNIST dataset'
       sys.exit()
@@ -373,7 +570,7 @@ class BouncingMNISTDataHandler(object):
   def GetRandomTrajectory(self, batch_size):
     length = self.seq_length_
     canvas_size = self.image_size_ - self.digit_size_
-    
+
     # Initial position uniform random inside the box.
     y = np.random.rand(batch_size)
     x = np.random.rand(batch_size)
@@ -415,17 +612,17 @@ class BouncingMNISTDataHandler(object):
   def Overlap(self, a, b):
     """ Put b on top of a."""
     return np.maximum(a, b)
-    #return b
+    # return b
 
   def GetBatch(self, verbose=False):
     start_y, start_x = self.GetRandomTrajectory(self.batch_size_ * self.num_digits_)
-    
+
     # minibatch data
     data = np.zeros((self.batch_size_, self.seq_length_, self.image_size_, self.image_size_), dtype=np.float32)
-    
+
     for j in xrange(self.batch_size_):
       for n in xrange(self.num_digits_):
-       
+
         # get random digit from dataset
         ind = self.indices_[self.row_]
         self.row_ += 1
@@ -433,26 +630,26 @@ class BouncingMNISTDataHandler(object):
           self.row_ = 0
           np.random.shuffle(self.indices_)
         digit_image = self.data_[ind, :, :]
-        
+
         # generate video
         for i in xrange(self.seq_length_):
-          top    = start_y[i, j * self.num_digits_ + n]
-          left   = start_x[i, j * self.num_digits_ + n]
-          bottom = top  + self.digit_size_
-          right  = left + self.digit_size_
+          top = start_y[i, j * self.num_digits_ + n]
+          left = start_x[i, j * self.num_digits_ + n]
+          bottom = top + self.digit_size_
+          right = left + self.digit_size_
           data[j, i, top:bottom, left:right] = self.Overlap(data[j, i, top:bottom, left:right], digit_image)
-    
+
     return data.reshape(self.batch_size_, -1), None
 
   def DisplayData(self, data, rec=None, fut=None, fig=1, case_id=0, output_file=None):
     output_file1 = None
     output_file2 = None
-    
+
     if output_file is not None:
       name, ext = os.path.splitext(output_file)
       output_file1 = '%s_original%s' % (name, ext)
       output_file2 = '%s_recon%s' % (name, ext)
-    
+
     # get data
     data = data[case_id, :].reshape(-1, self.image_size_, self.image_size_)
     # get reconstruction and future sequences if exist
@@ -465,13 +662,13 @@ class BouncingMNISTDataHandler(object):
         enc_seq_length = self.seq_length_ - fut.shape[0]
       else:
         assert enc_seq_length == self.seq_length_ - fut.shape[0]
-    
+
     num_rows = 1
     # create figure for original sequence
-    plt.figure(2*fig, figsize=(20, 1))
+    plt.figure(2 * fig, figsize=(20, 1))
     plt.clf()
     for i in xrange(self.seq_length_):
-      plt.subplot(num_rows, self.seq_length_, i+1)
+      plt.subplot(num_rows, self.seq_length_, i + 1)
       plt.imshow(data[i, :, :], cmap=plt.cm.gray, interpolation="nearest")
       plt.axis('off')
     plt.draw()
@@ -480,7 +677,7 @@ class BouncingMNISTDataHandler(object):
       plt.savefig(output_file1, bbox_inches='tight')
 
     # create figure for reconstuction and future sequences
-    plt.figure(2*fig+1, figsize=(20, 1))
+    plt.figure(2 * fig + 1, figsize=(20, 1))
     plt.clf()
     for i in xrange(self.seq_length_):
       if rec is not None and i < enc_seq_length:
@@ -496,6 +693,7 @@ class BouncingMNISTDataHandler(object):
       plt.savefig(output_file2, bbox_inches='tight')
     else:
       plt.pause(0.1)
+
 
 # video patches loaded from some file
 class VideoPatchDataHandler(object):
@@ -518,7 +716,7 @@ class VideoPatchDataHandler(object):
 
     try:
       self.data_ = np.float32(np.load(self.data_file_))
-      self.data_ = self.data_ / 255.  
+      self.data_ = self.data_ / 255.
     except:
       print 'Please set the correct path to the dataset'
       sys.exit()
@@ -543,28 +741,28 @@ class VideoPatchDataHandler(object):
     pass
 
   def GetBatch(self, verbose=False):
-    minibatch = self.data_[self.row_:self.row_+self.batch_size_]    
+    minibatch = self.data_[self.row_:self.row_ + self.batch_size_]
     self.row_ = self.row_ + self.batch_size_
-    
+
     if self.row_ == self.data_.shape[0]:
       self.row_ = 0
-    
+
     return minibatch.reshape(minibatch.shape[0], -1), None
 
   def DisplayData(self, data, rec=None, fut=None, fig=1, case_id=0, output_file=None):
     output_file1 = None
     output_file2 = None
-    
+
     if output_file is not None:
       name, ext = os.path.splitext(output_file)
       output_file1 = '%s_original%s' % (name, ext)
       output_file2 = '%s_recon%s' % (name, ext)
-    
+
     # get data
     if self.is_color_:
       data = data[case_id, :]
-      data[data>1.] = 1.
-      data[data<0.] = 0.
+      data[data > 1.] = 1.
+      data[data < 0.] = 0.
       data = data.reshape(-1, 3, self.image_size_, self.image_size_)
       data = data.transpose(0, 2, 3, 1)
     else:
@@ -574,34 +772,34 @@ class VideoPatchDataHandler(object):
     if rec is not None:
       if self.is_color_:
         rec = rec[case_id, :]
-        rec[rec>1.] = 1.
-        rec[rec<0.] = 0.
-        rec = rec.reshape(-1, 3, self.image_size_, self.image_size_)  
+        rec[rec > 1.] = 1.
+        rec[rec < 0.] = 0.
+        rec = rec.reshape(-1, 3, self.image_size_, self.image_size_)
         rec = rec.transpose(0, 2, 3, 1)
-      else:     
+      else:
         rec = rec[case_id, :].reshape(-1, self.image_size_, self.image_size_)
       enc_seq_length = rec.shape[0]
 
     if fut is not None:
       if self.is_color_:
         fut = fut[case_id, :]
-        fut[fut>1.] = 1.
-        fut[fut<0.] = 0.
+        fut[fut > 1.] = 1.
+        fut[fut < 0.] = 0.
         fut = fut.reshape(-1, 3, self.image_size_, self.image_size_)
         fut = fut.transpose(0, 2, 3, 1)
-      else:     
+      else:
         fut = fut[case_id, :].reshape(-1, self.image_size_, self.image_size_)
       if rec is None:
         enc_seq_length = self.seq_length_ - fut.shape[0]
       else:
         assert enc_seq_length == self.seq_length_ - fut.shape[0]
-    
+
     num_rows = 1
     # create figure for original sequence
-    plt.figure(2*fig, figsize=(self.num_frames_, 1))
+    plt.figure(2 * fig, figsize=(self.num_frames_, 1))
     plt.clf()
     for i in xrange(self.seq_length_):
-      plt.subplot(num_rows, self.seq_length_, i+1)
+      plt.subplot(num_rows, self.seq_length_, i + 1)
       if self.is_color_:
         plt.imshow(data[i])
       else:
@@ -613,7 +811,7 @@ class VideoPatchDataHandler(object):
       plt.savefig(output_file1, bbox_inches='tight')
 
     # create figure for reconstuction and future sequences
-    plt.figure(2*fig+1, figsize=(self.num_frames_, 1))
+    plt.figure(2 * fig + 1, figsize=(self.num_frames_, 1))
     plt.clf()
     for i in xrange(self.seq_length_):
       if rec is not None and i < enc_seq_length:

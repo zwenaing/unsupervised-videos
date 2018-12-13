@@ -1,0 +1,6 @@
+dataset_type: COSUM
+dataset_name: "data"
+data_file: "/home/zwe/unsupervised_videos/datasets/cosum_vgg_features"
+num_frames: 20
+batch_size: 100
+num_aggregated_frames : 10
